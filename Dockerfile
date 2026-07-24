@@ -11,8 +11,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     TZ=Asia/Shanghai \
     PLAYWRIGHT_BROWSERS_PATH=/opt/playwright \
     PIP_INDEX_URL=http://mirrors.tencent.com/pypi/simple \
-    PIP_TRUSTED_HOST=mirrors.tencent.com \
-    PLAYWRIGHT_DOWNLOAD_HOST=https://npmmirror.com/playwright-mirror
+    PIP_TRUSTED_HOST=mirrors.tencent.com
 
 # ========== 系统依赖 ==========
 # 使用腾讯云 Debian 镜像加速国内下载
@@ -56,9 +55,18 @@ RUN rm -f /etc/apt/sources.list /etc/apt/sources.list.d/debian.sources; \
 WORKDIR /app
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt && \
-    # Playwright 下载 Chromium 浏览器（约 300MB）到指定路径
-    playwright install chromium
+RUN pip install --no-cache-dir --root-user-action=ignore -r requirements.txt
+
+# 从预下载的压缩包安装 Chromium（避免国内无法访问 CDN）
+# 参考: https://storage.googleapis.com/chrome-for-testing-public/
+COPY chrome-linux64.zip /tmp/
+RUN mkdir -p /opt/playwright && \
+    unzip -q /tmp/chrome-linux64.zip -d /opt/playwright/chromium-1228/ && \
+    rm -f /tmp/chrome-linux64.zip && \
+    chmod +x /opt/playwright/chromium-1228/chrome-linux64/chrome && \
+    # 创建 Playwright 注册文件，标记浏览器已安装
+    mkdir -p /opt/playwright && \
+    echo "1228" > /opt/playwright/chromium-1228/INSTALLATION_COMPLETE
 
 # ========== 项目代码 ==========
 COPY . .
