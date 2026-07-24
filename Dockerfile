@@ -1,8 +1,8 @@
 # =============================================================================
 # scfx_dingding — 粮达网 → 钉钉知识库 数据采集同步系统
-# 基于 Debian slim，安装 Tesseract OCR（中文）+ Playwright Chromium
+# 基于 Debian 12 bookworm slim，安装 Tesseract OCR（中文）+ Playwright Chromium
 # =============================================================================
-FROM python:3.12-slim
+FROM python:3.12-slim-bookworm
 
 LABEL description="scfx_dingding: 粮达网 → 钉钉知识库 数据采集同步系统"
 
@@ -12,20 +12,21 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PLAYWRIGHT_BROWSERS_PATH=/opt/playwright
 
 # ========== 系统依赖 ==========
-# 只安装必要的包：Tesseract OCR + 中文字体 + Playwright 最小依赖
-RUN set -eux; \
+# 使用腾讯云 Debian 镜像加速国内下载
+RUN sed -i 's|deb.debian.org|mirrors.tencent.com|g' /etc/apt/sources.list 2>/dev/null || true; \
+    set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
         # Tesseract OCR + 中文语言包
         tesseract-ocr \
         tesseract-ocr-chi-sim \
         tesseract-ocr-eng \
-        # Playwright 核心依赖（不安装 chromium 系统包，由 playwright 自己管理）
+        # Playwright 核心依赖（不安装 chromium 系统包，由 playwright 管理）
         libnss3 \
         libnspr4 \
-        libatk1.0-0t64 \
-        libatk-bridge2.0-0t64 \
-        libcups2t64 \
+        libatk1.0-0 \
+        libatk-bridge2.0-0 \
+        libcups2 \
         libdrm2 \
         libdbus-1-3 \
         libxcb1 \
@@ -37,7 +38,7 @@ RUN set -eux; \
         libgbm1 \
         libpango-1.0-0 \
         libcairo2 \
-        libasound2t64 \
+        libasound2 \
         # 中文字体
         fonts-noto-cjk \
         # 工具
