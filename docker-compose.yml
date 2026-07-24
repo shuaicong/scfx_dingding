@@ -1,0 +1,40 @@
+version: "3.9"
+
+services:
+  scfx-dingding:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: scfx-dingding
+    restart: unless-stopped
+
+    # 数据持久化 — SQLite 数据库文件
+    volumes:
+      # SQLite 数据文件，确保数据不随容器销毁而丢失
+      - scfx_data:/app/data
+      # 如需持久化 Playwright 浏览器配置（登录态），取消下面注释
+      # - ./playwright_profile:/app/.playwright_profile
+
+    # 敏感信息通过 .env 文件注入（参见 .env.example）
+    env_file:
+      - .env
+
+    # 如需覆盖默认命令（例如执行一次同步），可在此设置
+    # command: ["--history", "--pages", "5"]
+
+    # 日志配置 — 采集到 Docker 日志驱动
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    # 资源限制（可选，根据服务器配置调整）
+    # deploy:
+    #   resources:
+    #     limits:
+    #       memory: 512M
+
+volumes:
+  scfx_data:
+    name: scfx_dingding_data

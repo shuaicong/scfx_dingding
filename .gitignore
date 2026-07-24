@@ -1,0 +1,34 @@
+# 数据文件
+data/
+*.db
+
+# 环境变量（敏感信息）
+.env
+
+# Playwright 浏览器配置
+.playwright_profile/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 调试文件
+debug_page.png
+report_page.png
+
+# Docker
+.scfx_dingding_data/
