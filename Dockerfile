@@ -11,7 +11,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     TZ=Asia/Shanghai \
     PLAYWRIGHT_BROWSERS_PATH=/opt/playwright \
     PIP_INDEX_URL=http://mirrors.tencent.com/pypi/simple \
-    PIP_TRUSTED_HOST=mirrors.tencent.com
+    PIP_TRUSTED_HOST=mirrors.tencent.com \
+    PLAYWRIGHT_DOWNLOAD_HOST=https://npmmirror.com/playwright-mirror
 
 # ========== 系统依赖 ==========
 # 使用腾讯云 Debian 镜像加速国内下载
