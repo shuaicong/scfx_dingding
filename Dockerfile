@@ -13,7 +13,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 # ========== 系统依赖 ==========
 # 使用腾讯云 Debian 镜像加速国内下载
-RUN sed -i 's|deb.debian.org|mirrors.tencent.com|g' /etc/apt/sources.list 2>/dev/null || true; \
+RUN rm -f /etc/apt/sources.list /etc/apt/sources.list.d/debian.sources; \
+    printf 'Types: deb\nURIs: http://mirrors.tencent.com/debian\nSuites: bookworm bookworm-updates\nComponents: main\nSigned-By: /usr/share/keyrings/debian-archive-keyring.gpg\n\nTypes: deb\nURIs: http://mirrors.tencent.com/debian-security\nSuites: bookworm-security\nComponents: main\nSigned-By: /usr/share/keyrings/debian-archive-keyring.gpg\n' > /etc/apt/sources.list.d/debian.sources; \
+    set -eux; \
     set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
