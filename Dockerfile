@@ -46,6 +46,7 @@ RUN rm -f /etc/apt/sources.list /etc/apt/sources.list.d/debian.sources; \
         fonts-noto-cjk \
         # 工具
         curl \
+        unzip \
         tzdata; \
     ln -sf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime; \
     apt-get clean; \
