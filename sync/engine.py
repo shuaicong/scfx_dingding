@@ -2,10 +2,12 @@
 
 连接粮达网爬虫和钉钉 API，执行文章同步逻辑。
 """
+import hashlib
 import logging
 import time
 
 from config import (
+    DAILY_WRITE_COOLDOWN_HOURS,
     DINGTALK_APP_KEY,
     DINGTALK_APP_SECRET,
     DINGTALK_UNION_ID,
@@ -25,6 +27,7 @@ from config import (
     GRAINMARKET_WORKSPACE_ID,
     GRAINMARKET_TARGET_NODE_ID,
     GRAINMARKET_ARTICLE_TYPES,
+    MONTHLY_QUOTA_LIMIT,
 )
 from dingtalk.client import DingTalkClient
 from crawler.liangdawang import LiangDaWangCrawler
@@ -54,6 +57,71 @@ class SyncEngine:
         self._price_index_folder_id: str | None = None
         self._big_data_folder_id: str | None = None
         self._huanan_folder_id: str | None = None
+
+    # ----------------------------------------------------------------
+    # 写入控制：内容哈希比对 + 每日冷却 + 月度熔断
+    # ----------------------------------------------------------------
+    def _get_record_hash(self, record_key: str) -> str | None:
+        """读取记录的最近内容哈希（空哈希视为 None，表示尚未记录）"""
+        if record_key.startswith("price_index:"):
+            rec = self.tracker.get_price_index_doc(record_key)
+        else:
+            rec = self.tracker.get_record(record_key)
+        if rec:
+            return rec.get("content_hash") or None
+        return None
+
+    def _set_record_hash(self, record_key: str, content_hash: str):
+        """记录内容哈希（同时刷新最后处理时间）"""
+        if record_key.startswith("price_index:"):
+            self.tracker.record_price_index_hash(record_key, content_hash)
+        else:
+            self.tracker.record_content_hash(record_key, content_hash)
+
+    def _within_cooldown(self, record_key: str) -> bool:
+        """判断记录是否在每日冷却期内"""
+        if record_key.startswith("price_index:"):
+            return self.tracker.price_index_within_cooldown(record_key, DAILY_WRITE_COOLDOWN_HOURS)
+        return self.tracker.is_within_cooldown(record_key, DAILY_WRITE_COOLDOWN_HOURS)
+
+    def _quota_available(self) -> bool:
+        """月度写入配额是否可用"""
+        return self.tracker.get_monthly_write_count() < MONTHLY_QUOTA_LIMIT
+
+    def _write_if_changed(self, doc_key: str, content: str, record_key: str,
+                          is_new: bool = False) -> bool:
+        """内容变化才写入钉钉文档，返回是否实际调用了 overwrite_content。
+
+        规则：
+          1. 月度配额熔断：达到上限则不写
+          2. 内容哈希相同：跳过写入
+          3. 存量空哈希（首次比对）：仅记录哈希不写入
+          4. 非新增且冷却期内：跳过写入
+        """
+        if not self._quota_available():
+            logger.warning("月度钉钉写入配额已达上限，跳过写入: %s", record_key)
+            return False
+
+        content_hash = hashlib.sha1(content.encode("utf-8")).hexdigest()
+        prev_hash = self._get_record_hash(record_key)
+
+        if prev_hash == content_hash:
+            logger.info("内容未变化，跳过写入: %s", record_key)
+            return False
+
+        if prev_hash is None:
+            logger.info("首次比对，仅记录内容哈希: %s", record_key)
+            self._set_record_hash(record_key, content_hash)
+            return False
+
+        if not is_new and self._within_cooldown(record_key):
+            logger.info("每日冷却期内，跳过写入: %s", record_key)
+            return False
+
+        self.dingtalk.overwrite_content(doc_key=doc_key, content=content)
+        self._set_record_hash(record_key, content_hash)
+        self.tracker.bump_monthly_write_count()
+        return True
 
     # ----------------------------------------------------------------
     # 执行一次同步
