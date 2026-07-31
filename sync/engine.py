@@ -329,6 +329,11 @@ class SyncEngine:
             # 检查是否已同步过（存储 docKey）
             existing = self.tracker.get_price_index_doc(doc_key_id)
 
+            # 冷却期内跳过已有组合的整篇处理（含爬虫构建）
+            if existing and self.tracker.price_index_within_cooldown(doc_key_id, DAILY_WRITE_COOLDOWN_HOURS):
+                stats["skipped"] += 1
+                continue
+
             # 构建文档内容
             try:
                 content = self.price_index.build_document(config)
@@ -346,10 +351,13 @@ class SyncEngine:
             # 写入钉钉
             try:
                 if existing:
-                    # 覆盖已有文档
+                    # 覆盖已有文档：内容变化且不在冷却期才写入
                     doc_key = existing["dingtalk_doc_key"]
-                    self.dingtalk.overwrite_content(doc_key=doc_key, content=content)
-                    logger.info("已更新: %s", title)
+                    if self._write_if_changed(doc_key, content, doc_key_id):
+                        stats["success"] += 1
+                    else:
+                        stats["skipped"] += 1
+                    logger.info("已处理: %s", title)
                 else:
                     # 创建新文档
                     doc = self.dingtalk.create_document(
@@ -360,18 +368,27 @@ class SyncEngine:
                     doc_key = doc.get("docKey", "")
                     doc_url = doc.get("url", "")
 
-                    self.dingtalk.overwrite_content(doc_key=doc_key, content=content)
+                    # 写入内容；配额满时仅登记 docKey，内容待配额恢复后补齐
+                    hash_value = ""
+                    if self._quota_available():
+                        self.dingtalk.overwrite_content(doc_key=doc_key, content=content)
+                        self.tracker.bump_monthly_write_count()
+                        hash_value = hashlib.sha1(content.encode("utf-8")).hexdigest()
+                        stats["success"] += 1
+                    else:
+                        logger.warning("月度配额已满，跳过新增写入: %s", title)
+                        stats["skipped"] += 1
 
-                    # 记录 docKey
+                    # 记录 docKey（含内容哈希，未实际写入则为空）
                     self.tracker.mark_price_index_synced(
                         doc_key_id=doc_key_id,
                         title=title,
                         dingtalk_doc_key=doc_key,
                         dingtalk_url=doc_url,
+                        content_hash=hash_value,
                     )
                     logger.info("已创建: %s", title)
 
-                stats["success"] += 1
                 stats["results"].append({"title": title, "status": "ok"})
 
             except Exception as e:
@@ -513,6 +530,11 @@ class SyncEngine:
             # 查询已有记录（判断是新文章还是更新）
             existing = self.tracker.get_record(track_key)
 
+            # 冷却期内跳过已有文章的整篇处理（含爬虫构建）
+            if existing and self.tracker.is_within_cooldown(track_key, DAILY_WRITE_COOLDOWN_HOURS):
+                stats["skipped"] += 1
+                continue
+
             try:
                 self._sync_one_huanan(article_id, title, track_key, existing)
                 if existing:
@@ -557,10 +579,10 @@ class SyncEngine:
         content = huanan_crawler.build_markdown(detail, local_files)
 
         if existing_record and existing_record.get("dingtalk_doc_key"):
-            # 已有文档：覆盖更新内容
+            # 已有文档：内容变化且不在冷却期才覆盖更新
             doc_key = existing_record["dingtalk_doc_key"]
-            self.dingtalk.overwrite_content(doc_key=doc_key, content=content)
-            logger.info("文档已覆盖更新: docKey=%s", doc_key)
+            self._write_if_changed(doc_key, content, track_key)
+            logger.info("文档已处理: docKey=%s", doc_key)
         else:
             # 新文章：创建文档并写入
             doc = self.dingtalk.create_document(
@@ -571,15 +593,23 @@ class SyncEngine:
             doc_key = doc.get("docKey", "")
             doc_url = doc.get("url", "")
 
-            self.dingtalk.overwrite_content(doc_key=doc_key, content=content)
+            # 写入内容；配额满时仅登记 docKey，内容待配额恢复后补齐
+            hash_value = ""
+            if self._quota_available():
+                self.dingtalk.overwrite_content(doc_key=doc_key, content=content)
+                self.tracker.bump_monthly_write_count()
+                hash_value = hashlib.sha1(content.encode("utf-8")).hexdigest()
+            else:
+                logger.warning("月度配额已满，跳过新增写入: %s", title)
 
-            # 标记已同步
+            # 标记已同步（含内容哈希）
             self.tracker.mark_synced(
                 article_id=track_key,
                 title=title,
                 dingtalk_doc_key=doc_key,
                 dingtalk_url=doc_url,
                 extra=f'{{"source":"huanan","articleId":{article_id}}}',
+                content_hash=hash_value,
             )
 
     # ----------------------------------------------------------------
@@ -615,6 +645,11 @@ class SyncEngine:
             article_type_name = article.get("_articleTypeName", "")
 
             existing = self.tracker.get_record(track_key)
+
+            # 冷却期内跳过已有文章的整篇处理（含爬虫构建）
+            if existing and self.tracker.is_within_cooldown(track_key, DAILY_WRITE_COOLDOWN_HOURS):
+                stats["skipped"] += 1
+                continue
 
             try:
                 self._sync_one_grainmarket(article_id, title, track_key,
@@ -661,10 +696,10 @@ class SyncEngine:
         )
 
         if existing_record and existing_record.get("dingtalk_doc_key"):
-            # 已有文档：覆盖更新
+            # 已有文档：内容变化且不在冷却期才覆盖更新
             doc_key = existing_record["dingtalk_doc_key"]
-            self.dingtalk.overwrite_content(doc_key=doc_key, content=content)
-            logger.info("文档已覆盖更新: docKey=%s", doc_key)
+            self._write_if_changed(doc_key, content, track_key)
+            logger.info("文档已处理: docKey=%s", doc_key)
         else:
             # 新文章：创建文档并写入
             doc = self.dingtalk.create_document(
@@ -674,7 +709,14 @@ class SyncEngine:
             )
             doc_key = doc.get("docKey", "")
             doc_url = doc.get("url", "")
-            self.dingtalk.overwrite_content(doc_key=doc_key, content=content)
+            # 写入内容；配额满时仅登记 docKey，内容待配额恢复后补齐
+            hash_value = ""
+            if self._quota_available():
+                self.dingtalk.overwrite_content(doc_key=doc_key, content=content)
+                self.tracker.bump_monthly_write_count()
+                hash_value = hashlib.sha1(content.encode("utf-8")).hexdigest()
+            else:
+                logger.warning("月度配额已满，跳过新增写入: %s", title)
 
             self.tracker.mark_synced(
                 article_id=track_key,
@@ -682,6 +724,7 @@ class SyncEngine:
                 dingtalk_doc_key=doc_key,
                 dingtalk_url=doc_url,
                 extra=f'{{"source":"grainmarket","articleId":"{article_id}","type":"{article_type_name}"}}',
+                content_hash=hash_value,
             )
 
     # ----------------------------------------------------------------

@@ -89,3 +89,20 @@ def test_quota_bumps_on_write(engine, monkeypatch):
     engine.tracker.record_content_hash("a", "old_hash")
     engine._write_if_changed("docKey1", "新内容", "a")
     assert engine.tracker.get_monthly_write_count() == 1
+
+
+def test_write_if_changed_routes_price_index_branch(engine, monkeypatch):
+    """price_index: 前缀的记录走 price_index_records 表，哈希比对独立生效"""
+    engine.tracker.mark_price_index_synced("price_index:1", "标题", "docKey_pi")
+    content = "价格内容"
+    engine.tracker.record_price_index_hash(
+        "price_index:1", hashlib.sha1(content.encode("utf-8")).hexdigest())
+    # 内容未变化 → 跳过，且不会调用普通 sync_records 的方法
+    assert engine._write_if_changed("docKey_pi", content, "price_index:1") is False
+    engine.dingtalk.overwrite_content.assert_not_called()
+    # 内容变化且关闭冷却 → 写入 price_index 记录
+    engine.tracker.record_price_index_hash("price_index:1", "old_pi_hash")
+    monkeypatch.setattr(engine_module, "DAILY_WRITE_COOLDOWN_HOURS", 0)
+    assert engine._write_if_changed("docKey_pi", "新价格内容", "price_index:1") is True
+    engine.dingtalk.overwrite_content.assert_called_once_with(doc_key="docKey_pi", content="新价格内容")
+    assert engine.tracker.get_price_index_doc("price_index:1")["content_hash"] is not None
