@@ -293,15 +293,20 @@ class SyncEngine:
     # 价格指数同步
     # ----------------------------------------------------------------
     def _ensure_price_index_folder(self) -> str:
-        """确保价格指数文件夹存在，返回 nodeId"""
+        """确保价格指数文件夹存在，返回 nodeId（本地 meta 缓存，避免每轮查询）"""
         if self._price_index_folder_id:
             return self._price_index_folder_id
+        cached = self.tracker.meta_get("folder_node_id:price_index")
+        if cached:
+            self._price_index_folder_id = cached
+            return cached
         folder_id = self.dingtalk.find_or_create_folder(
             workspace_id=DINGTALK_WORKSPACE_ID,
             parent_node_id=DINGTALK_PARENT_NODE_ID,
             name=PRICE_INDEX_FOLDER_NAME,
         )
         self._price_index_folder_id = folder_id
+        self.tracker.meta_set("folder_node_id:price_index", folder_id)
         return folder_id
 
     def sync_price_indices(self) -> dict:
@@ -409,15 +414,20 @@ class SyncEngine:
     # 农粮大数据同步
     # ----------------------------------------------------------------
     def _ensure_big_data_folder(self) -> str:
-        """确保农粮大数据文件夹存在，返回 nodeId"""
+        """确保农粮大数据文件夹存在，返回 nodeId（本地 meta 缓存）"""
         if self._big_data_folder_id:
             return self._big_data_folder_id
+        cached = self.tracker.meta_get("folder_node_id:big_data")
+        if cached:
+            self._big_data_folder_id = cached
+            return cached
         folder_id = self.dingtalk.find_or_create_folder(
             workspace_id=DINGTALK_WORKSPACE_ID,
             parent_node_id=DINGTALK_PARENT_NODE_ID,
             name=BIG_DATA_FOLDER_NAME,
         )
         self._big_data_folder_id = folder_id
+        self.tracker.meta_set("folder_node_id:big_data", folder_id)
         return folder_id
 
     def _sync_one_big_data(self, article_id: str, title: str, folder_id: str):

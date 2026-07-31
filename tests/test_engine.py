@@ -118,3 +118,22 @@ def test_pending_hash_triggers_backfill_write(engine, monkeypatch):
     assert written is True
     engine.dingtalk.overwrite_content.assert_called_once_with(doc_key="docKey_pi", content="新内容")
     assert engine.tracker.get_price_index_doc("price_index:1")["content_hash"] != engine_module.PENDING_HASH
+
+
+def test_price_index_folder_cached_in_meta(engine):
+    engine.dingtalk.find_or_create_folder.return_value = "folderId"
+    fid = engine._ensure_price_index_folder()
+    assert fid == "folderId"
+    engine.dingtalk.find_or_create_folder.assert_called_once()
+    engine.dingtalk.find_or_create_folder.reset_mock()
+    assert engine._ensure_price_index_folder() == "folderId"
+    engine.dingtalk.find_or_create_folder.assert_not_called()
+    assert engine.tracker.meta_get("folder_node_id:price_index") == "folderId"
+
+
+def test_big_data_folder_cached_in_meta(engine):
+    engine.dingtalk.find_or_create_folder.return_value = "bigFolder"
+    assert engine._ensure_big_data_folder() == "bigFolder"
+    engine.dingtalk.find_or_create_folder.reset_mock()
+    assert engine._ensure_big_data_folder() == "bigFolder"
+    engine.dingtalk.find_or_create_folder.assert_not_called()
