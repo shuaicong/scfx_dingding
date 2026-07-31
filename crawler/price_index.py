@@ -7,7 +7,7 @@ from typing import Any
 from datetime import datetime, timedelta
 
 import requests
-from config import PRICE_INDEX_DAYS
+from config import PRICE_INDEX_DAYS, PRICE_INDEX_EXCLUDE_VARIETIES, PRICE_INDEX_DEEP_KEEP_AREAS
 
 logger = logging.getLogger(__name__)
 
@@ -105,12 +105,21 @@ class PriceIndexCollector:
                 "area_id": "...",
             }, ...]
         """
+        exclude_varieties = {
+            v.strip() for v in PRICE_INDEX_EXCLUDE_VARIETIES.split(",") if v.strip()
+        }
+        keep_deep_areas = {
+            a.strip() for a in PRICE_INDEX_DEEP_KEEP_AREAS.split(",") if a.strip()
+        }
         combinations = []
         varieties = self.get_variety_list()
 
         for variety in varieties:
             vname = variety["varietyName"]
             vid = variety["id"]
+            if vname in exclude_varieties:
+                logger.info("排除品种: %s", vname)
+                continue
             tree = self.get_variety_tree(vid)
 
             for region in tree:
@@ -141,6 +150,9 @@ class PriceIndexCollector:
                         # 每个等级×价格类型作为一个采集组合
                         for rank in ranks:
                             for pt in price_types:
+                                # 深加工企业收购价仅保留白名单收购点
+                                if pt == "深加工企业收购价" and keep_deep_areas and area_name not in keep_deep_areas:
+                                    continue
                                 combinations.append({
                                     "variety_name": vname,
                                     "variety_id": vid,
@@ -194,7 +206,11 @@ class PriceIndexCollector:
         lines.append(f"**区域**: {config['area_type']} / {config['province']} / {config['area']}  ")
         lines.append(f"**等级**: {config['rank']}  ")
         lines.append(f"**价格类型**: {config['price_type']}  ")
-        lines.append(f"**采集时间**: {datetime.now().strftime('%Y-%m-%d %H:%M')}  ")
+        # 数据截止日期取价格数据最后一天，保证内容只在数据更新时变化
+        if recent:
+            last_date = recent[-1].get("priceDate", "") or ""
+            if last_date:
+                lines.append(f"**数据截止日期**: {last_date}  ")
         lines.append("")
         lines.append("---")
         lines.append("")
