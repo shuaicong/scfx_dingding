@@ -147,21 +147,26 @@ class PriceIndexCollector:
                         ranks = rt_data.get("rankNameList", [])
                         price_types = rt_data.get("priceTypeList", [])
 
-                        # 每个等级×价格类型作为一个采集组合
-                        for rank in ranks:
-                            for pt in price_types:
-                                # 深加工企业收购价仅保留白名单收购点
-                                if pt == "深加工企业收购价" and keep_deep_areas and area_name not in keep_deep_areas:
-                                    continue
-                                combinations.append({
-                                    "variety_name": vname,
-                                    "variety_id": vid,
-                                    "area_type": area_type,
-                                    "province": province,
-                                    "area": area_name,
-                                    "rank": rank,
-                                    "price_type": pt,
-                                })
+                        # 等级精简：每个地点只保留主等级（列表第一个），
+                        # 避免多等级展开放大钉钉覆盖写入调用量
+                        primary_rank = ranks[0] if ranks else None
+                        if primary_rank is None:
+                            continue
+
+                        # 每个价格类型作为一个采集组合
+                        for pt in price_types:
+                            # 深加工企业收购价仅保留白名单收购点
+                            if pt == "深加工企业收购价" and keep_deep_areas and area_name not in keep_deep_areas:
+                                continue
+                            combinations.append({
+                                "variety_name": vname,
+                                "variety_id": vid,
+                                "area_type": area_type,
+                                "province": province,
+                                "area": area_name,
+                                "rank": primary_rank,
+                                "price_type": pt,
+                            })
 
         return combinations
 

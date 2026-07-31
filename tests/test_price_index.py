@@ -41,6 +41,27 @@ def test_exclude_varieties(mock_list, mock_tree, mock_rank, monkeypatch):
 @mock.patch.object(PriceIndexCollector, "get_rank_and_type", side_effect=fake_rank_type)
 @mock.patch.object(PriceIndexCollector, "get_variety_tree", side_effect=fake_tree)
 @mock.patch.object(PriceIndexCollector, "get_variety_list", side_effect=fake_varieties)
+def test_only_primary_rank_kept(mock_list, mock_tree, mock_rank, monkeypatch):
+    """多等级展开时每个地点只保留主等级（列表第一个），避免组合数翻倍放大调用量"""
+
+    def multi_rank(*args, **kwargs):
+        return {"success": True, "data": {
+            "rankNameList": ["二等", "其他"],
+            "priceTypeList": ["主流粮成交价", "深加工企业收购价"],
+        }}
+
+    mock_rank.side_effect = multi_rank
+    pc = PriceIndexCollector()
+    combos = pc.expand_all_combinations()
+    # 所有组合均为主等级"二等"
+    assert all(c["rank"] == "二等" for c in combos)
+    # 2 品种 × 2 地点 × 2 价格类型 = 8，不再乘以等级数
+    assert len(combos) == 8
+
+
+@mock.patch.object(PriceIndexCollector, "get_rank_and_type", side_effect=fake_rank_type)
+@mock.patch.object(PriceIndexCollector, "get_variety_tree", side_effect=fake_tree)
+@mock.patch.object(PriceIndexCollector, "get_variety_list", side_effect=fake_varieties)
 def test_deep_keep_areas(mock_list, mock_tree, mock_rank, monkeypatch):
     monkeypatch.setattr("crawler.price_index.PRICE_INDEX_EXCLUDE_VARIETIES", "")
     monkeypatch.setattr("crawler.price_index.PRICE_INDEX_DEEP_KEEP_AREAS", "石家庄")
