@@ -41,6 +41,9 @@ from utils.notifier import send_notification, build_new_articles_message
 
 logger = logging.getLogger(__name__)
 
+# 内容未写入（创建时配额满）的哈希占位，标记文档需要补写
+PENDING_HASH = "__PENDING__"
+
 
 class SyncEngine:
     """同步引擎"""
@@ -105,16 +108,17 @@ class SyncEngine:
         content_hash = hashlib.sha1(content.encode("utf-8")).hexdigest()
         prev_hash = self._get_record_hash(record_key)
 
-        if prev_hash == content_hash:
+        if prev_hash == PENDING_HASH:
+            # 上次创建时配额满未写入内容，本次配额已恢复则直接补写（忽略冷却与首次比对）
+            logger.info("检测到未写入内容，执行补写: %s", record_key)
+        elif prev_hash == content_hash:
             logger.info("内容未变化，跳过写入: %s", record_key)
             return False
-
-        if prev_hash is None:
+        elif prev_hash is None:
             logger.info("首次比对，仅记录内容哈希: %s", record_key)
             self._set_record_hash(record_key, content_hash)
             return False
-
-        if not is_new and self._within_cooldown(record_key):
+        elif not is_new and self._within_cooldown(record_key):
             logger.info("每日冷却期内，跳过写入: %s", record_key)
             return False
 
@@ -368,8 +372,8 @@ class SyncEngine:
                     doc_key = doc.get("docKey", "")
                     doc_url = doc.get("url", "")
 
-                    # 写入内容；配额满时仅登记 docKey，内容待配额恢复后补齐
-                    hash_value = ""
+                    # 写入内容；配额满时仅登记 docKey，用占位哈希标记待补写
+                    hash_value = PENDING_HASH
                     if self._quota_available():
                         self.dingtalk.overwrite_content(doc_key=doc_key, content=content)
                         self.tracker.bump_monthly_write_count()
@@ -379,7 +383,7 @@ class SyncEngine:
                         logger.warning("月度配额已满，跳过新增写入: %s", title)
                         stats["skipped"] += 1
 
-                    # 记录 docKey（含内容哈希，未实际写入则为空）
+                    # 记录 docKey（含内容哈希，未实际写入则为占位哈希待补写）
                     self.tracker.mark_price_index_synced(
                         doc_key_id=doc_key_id,
                         title=title,
@@ -536,15 +540,19 @@ class SyncEngine:
                 continue
 
             try:
-                self._sync_one_huanan(article_id, title, track_key, existing)
-                if existing:
+                result = self._sync_one_huanan(article_id, title, track_key, existing)
+                if result == "updated":
                     stats["updated"] += 1
                     stats["results"].append({"id": article_id, "title": title, "status": "updated"})
                     logger.info("更新成功: [%s] %s", article_id, title)
-                else:
+                elif result == "new":
                     stats["new"] += 1
                     stats["results"].append({"id": article_id, "title": title, "status": "ok"})
                     logger.info("同步成功: [%s] %s", article_id, title)
+                else:
+                    stats["skipped"] += 1
+                    stats["results"].append({"id": article_id, "title": title, "status": "skipped"})
+                    logger.info("跳过: [%s] %s", article_id, title)
             except Exception as e:
                 stats["failed"] += 1
                 stats["results"].append({"id": article_id, "title": title, "status": "fail", "error": str(e)})
@@ -558,11 +566,13 @@ class SyncEngine:
         return stats
 
     def _sync_one_huanan(self, article_id: int, title: str, track_key: str,
-                         existing_record: dict | None = None):
+                         existing_record: dict | None = None) -> str:
         """同步单篇华南粮网文章到钉钉知识库
 
-        Args:
-            existing_record: 已有同步记录，如果提供则覆盖更新文档内容
+        Returns:
+            "updated": 已有文档且实际覆盖写入
+            "new": 新文章且实际写入内容
+            "skipped": 内容未变化/冷却期/配额满等原因未写入
         """
         # 1. 获取详情
         detail = huanan_crawler.get_detail(article_id)
@@ -581,36 +591,43 @@ class SyncEngine:
         if existing_record and existing_record.get("dingtalk_doc_key"):
             # 已有文档：内容变化且不在冷却期才覆盖更新
             doc_key = existing_record["dingtalk_doc_key"]
-            self._write_if_changed(doc_key, content, track_key)
-            logger.info("文档已处理: docKey=%s", doc_key)
+            if self._write_if_changed(doc_key, content, track_key):
+                logger.info("文档已覆盖更新: docKey=%s", doc_key)
+                return "updated"
+            logger.info("文档内容未变化或未写入: docKey=%s", doc_key)
+            return "skipped"
+
+        # 新文章：创建文档并写入
+        doc = self.dingtalk.create_document(
+            workspace_id=HUANAN_WORKSPACE_ID,
+            parent_node_id=HUANAN_TARGET_NODE_ID,
+            name=title,
+        )
+        doc_key = doc.get("docKey", "")
+        doc_url = doc.get("url", "")
+
+        # 写入内容；配额满时仅登记 docKey，用占位哈希标记待补写
+        written = False
+        hash_value = PENDING_HASH
+        if self._quota_available():
+            self.dingtalk.overwrite_content(doc_key=doc_key, content=content)
+            self.tracker.bump_monthly_write_count()
+            hash_value = hashlib.sha1(content.encode("utf-8")).hexdigest()
+            written = True
         else:
-            # 新文章：创建文档并写入
-            doc = self.dingtalk.create_document(
-                workspace_id=HUANAN_WORKSPACE_ID,
-                parent_node_id=HUANAN_TARGET_NODE_ID,
-                name=title,
-            )
-            doc_key = doc.get("docKey", "")
-            doc_url = doc.get("url", "")
+            logger.warning("月度配额已满，跳过新增写入: %s", title)
 
-            # 写入内容；配额满时仅登记 docKey，内容待配额恢复后补齐
-            hash_value = ""
-            if self._quota_available():
-                self.dingtalk.overwrite_content(doc_key=doc_key, content=content)
-                self.tracker.bump_monthly_write_count()
-                hash_value = hashlib.sha1(content.encode("utf-8")).hexdigest()
-            else:
-                logger.warning("月度配额已满，跳过新增写入: %s", title)
-
-            # 标记已同步（含内容哈希）
-            self.tracker.mark_synced(
-                article_id=track_key,
-                title=title,
-                dingtalk_doc_key=doc_key,
-                dingtalk_url=doc_url,
-                extra=f'{{"source":"huanan","articleId":{article_id}}}',
-                content_hash=hash_value,
-            )
+        # 标记已同步（含内容哈希）
+        self.tracker.mark_synced(
+            article_id=track_key,
+            title=title,
+            dingtalk_doc_key=doc_key,
+            dingtalk_url=doc_url,
+            extra=f'{{"source":"huanan","articleId":{article_id}}}',
+            content_hash=hash_value,
+        )
+        logger.info("已创建: %s", title)
+        return "new" if written else "skipped"
 
     # ----------------------------------------------------------------
     # 国家粮食交易中心（海南）同步
@@ -652,22 +669,26 @@ class SyncEngine:
                 continue
 
             try:
-                self._sync_one_grainmarket(article_id, title, track_key,
-                                           article_type_name, existing)
-                if existing:
+                result = self._sync_one_grainmarket(article_id, title, track_key,
+                                                    article_type_name, existing)
+                if result == "updated":
                     stats["updated"] += 1
                     stats["results"].append({"id": article_id, "title": title, "status": "updated"})
-                else:
+                elif result == "new":
                     stats["new"] += 1
                     stats["results"].append({"id": article_id, "title": title, "status": "ok"})
-                logger.info("%s: [%s] %s", "更新成功" if existing else "同步成功", article_id, title)
+                else:
+                    stats["skipped"] += 1
+                    stats["results"].append({"id": article_id, "title": title, "status": "skipped"})
+                logger.info("%s: [%s] %s",
+                            {"updated": "更新成功", "new": "同步成功"}.get(result, "跳过"),
+                            article_id, title)
             except Exception as e:
                 stats["failed"] += 1
                 stats["results"].append({"id": article_id, "title": title, "status": "fail", "error": str(e)})
                 logger.error("同步失败: [%s] %s - %s", article_id, title, e)
 
             # 避免触发接口限流
-            import time
             time.sleep(0.5)
 
         logger.info("===== 海南交易中心同步完成: 总计%d, 新增%d, 更新%d, 失败%d =====",
@@ -676,8 +697,14 @@ class SyncEngine:
 
     def _sync_one_grainmarket(self, article_id: str, title: str, track_key: str,
                               article_type_name: str = "",
-                              existing_record: dict | None = None):
-        """同步单篇海南交易中心文章到钉钉知识库"""
+                              existing_record: dict | None = None) -> str:
+        """同步单篇海南交易中心文章到钉钉知识库
+
+        Returns:
+            "updated": 已有文档且实际覆盖写入
+            "new": 新文章且实际写入内容
+            "skipped": 内容未变化/冷却期/配额满等原因未写入
+        """
         # 1. 获取详情
         detail = grainmarket_crawler.get_detail(article_id)
 
@@ -698,34 +725,42 @@ class SyncEngine:
         if existing_record and existing_record.get("dingtalk_doc_key"):
             # 已有文档：内容变化且不在冷却期才覆盖更新
             doc_key = existing_record["dingtalk_doc_key"]
-            self._write_if_changed(doc_key, content, track_key)
-            logger.info("文档已处理: docKey=%s", doc_key)
-        else:
-            # 新文章：创建文档并写入
-            doc = self.dingtalk.create_document(
-                workspace_id=GRAINMARKET_WORKSPACE_ID,
-                parent_node_id=GRAINMARKET_TARGET_NODE_ID,
-                name=title,
-            )
-            doc_key = doc.get("docKey", "")
-            doc_url = doc.get("url", "")
-            # 写入内容；配额满时仅登记 docKey，内容待配额恢复后补齐
-            hash_value = ""
-            if self._quota_available():
-                self.dingtalk.overwrite_content(doc_key=doc_key, content=content)
-                self.tracker.bump_monthly_write_count()
-                hash_value = hashlib.sha1(content.encode("utf-8")).hexdigest()
-            else:
-                logger.warning("月度配额已满，跳过新增写入: %s", title)
+            if self._write_if_changed(doc_key, content, track_key):
+                logger.info("文档已覆盖更新: docKey=%s", doc_key)
+                return "updated"
+            logger.info("文档内容未变化或未写入: docKey=%s", doc_key)
+            return "skipped"
 
-            self.tracker.mark_synced(
-                article_id=track_key,
-                title=title,
-                dingtalk_doc_key=doc_key,
-                dingtalk_url=doc_url,
-                extra=f'{{"source":"grainmarket","articleId":"{article_id}","type":"{article_type_name}"}}',
-                content_hash=hash_value,
-            )
+        # 新文章：创建文档并写入
+        doc = self.dingtalk.create_document(
+            workspace_id=GRAINMARKET_WORKSPACE_ID,
+            parent_node_id=GRAINMARKET_TARGET_NODE_ID,
+            name=title,
+        )
+        doc_key = doc.get("docKey", "")
+        doc_url = doc.get("url", "")
+
+        # 写入内容；配额满时仅登记 docKey，用占位哈希标记待补写
+        written = False
+        hash_value = PENDING_HASH
+        if self._quota_available():
+            self.dingtalk.overwrite_content(doc_key=doc_key, content=content)
+            self.tracker.bump_monthly_write_count()
+            hash_value = hashlib.sha1(content.encode("utf-8")).hexdigest()
+            written = True
+        else:
+            logger.warning("月度配额已满，跳过新增写入: %s", title)
+
+        self.tracker.mark_synced(
+            article_id=track_key,
+            title=title,
+            dingtalk_doc_key=doc_key,
+            dingtalk_url=doc_url,
+            extra=f'{{"source":"grainmarket","articleId":"{article_id}","type":"{article_type_name}"}}',
+            content_hash=hash_value,
+        )
+        logger.info("已创建: %s", title)
+        return "new" if written else "skipped"
 
     # ----------------------------------------------------------------
     # 钉钉机器人通知

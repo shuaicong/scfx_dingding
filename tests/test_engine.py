@@ -106,3 +106,15 @@ def test_write_if_changed_routes_price_index_branch(engine, monkeypatch):
     assert engine._write_if_changed("docKey_pi", "新价格内容", "price_index:1") is True
     engine.dingtalk.overwrite_content.assert_called_once_with(doc_key="docKey_pi", content="新价格内容")
     assert engine.tracker.get_price_index_doc("price_index:1")["content_hash"] is not None
+
+
+def test_pending_hash_triggers_backfill_write(engine, monkeypatch):
+    """创建时配额满的记录以 PENDING_HASH 占位，配额恢复后应补写内容"""
+    monkeypatch.setattr(engine_module, "DAILY_WRITE_COOLDOWN_HOURS", 24)
+    engine.tracker.mark_price_index_synced(
+        "price_index:1", "标题", "docKey_pi",
+        content_hash=engine_module.PENDING_HASH)
+    written = engine._write_if_changed("docKey_pi", "新内容", "price_index:1")
+    assert written is True
+    engine.dingtalk.overwrite_content.assert_called_once_with(doc_key="docKey_pi", content="新内容")
+    assert engine.tracker.get_price_index_doc("price_index:1")["content_hash"] != engine_module.PENDING_HASH
