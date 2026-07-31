@@ -273,7 +273,16 @@ class SyncEngine:
     # AI 助理知识库更新触发
     # ----------------------------------------------------------------
     def _trigger_relearn(self):
-        """触发 AI 助理重新学习知识库"""
+        """触发 AI 助理重新学习知识库（每日冷却，避免频繁触发）"""
+        last = self.tracker.meta_get("relearn_last_trigger")
+        if last:
+            try:
+                if time.time() - float(last) < DAILY_WRITE_COOLDOWN_HOURS * 3600:
+                    logger.info("AI 重学冷却期内，跳过触发")
+                    return
+            except ValueError:
+                pass
+
         logger.info("检测到新增文章，触发 AI 助理知识库更新...")
         try:
             result = trigger_knowledge_relearn(
@@ -288,6 +297,8 @@ class SyncEngine:
                                result.get("response", "未知错误"))
         except Exception as e:
             logger.warning("AI 助理知识库更新触发异常: %s（不影响同步结果）", e)
+
+        self.tracker.meta_set("relearn_last_trigger", str(time.time()))
 
     # ----------------------------------------------------------------
     # 价格指数同步

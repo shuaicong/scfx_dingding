@@ -151,3 +151,20 @@ def test_price_index_folder_read_from_meta_on_fresh_instance(engine):
     fresh._huanan_folder_id = None
     assert fresh._ensure_price_index_folder() == "folderId"
     fresh.dingtalk.find_or_create_folder.assert_not_called()
+
+
+def test_relearn_cooldown_skips(engine, monkeypatch):
+    monkeypatch.setattr(engine_module, "trigger_knowledge_relearn",
+                        mock.MagicMock(return_value={"success": True, "response": "ok"}))
+    engine.tracker.meta_set("relearn_last_trigger", str(time.time()))
+    engine._trigger_relearn()
+    engine_module.trigger_knowledge_relearn.assert_not_called()
+
+
+def test_relearn_triggered_after_cooldown(engine, monkeypatch):
+    monkeypatch.setattr(engine_module, "trigger_knowledge_relearn",
+                        mock.MagicMock(return_value={"success": True, "response": "ok"}))
+    engine.tracker.meta_set("relearn_last_trigger", str(time.time() - 25 * 3600))
+    engine._trigger_relearn()
+    engine_module.trigger_knowledge_relearn.assert_called_once()
+    assert engine.tracker.meta_get("relearn_last_trigger") is not None
