@@ -100,8 +100,8 @@ PRICE_INDEX_EXCLUDE_VARIETIES = _env("PRICE_INDEX_EXCLUDE_VARIETIES", "")
 PRICE_INDEX_DEEP_KEEP_AREAS = _env("PRICE_INDEX_DEEP_KEEP_AREAS", "")
 # 同文档每日冷却期（小时），冷却期内不重复写入
 DAILY_WRITE_COOLDOWN_HOURS = _env_int("DAILY_WRITE_COOLDOWN_HOURS", 24)
-# 月度写入熔断阈值
-MONTHLY_QUOTA_LIMIT = _env_int("MONTHLY_QUOTA_LIMIT", 4800)
+# 月度写入熔断阈值（预留 gettoken 与 create_document 的额度空间）
+MONTHLY_QUOTA_LIMIT = _env_int("MONTHLY_QUOTA_LIMIT", 4000)
 
 # ========== 调度配置 ==========
 # 轮询间隔（分钟），每隔 N 分钟检测一次新文章

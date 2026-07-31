@@ -1314,8 +1314,10 @@ git commit -m "test: 全量回归验证" || echo "无改动可提交"
 PRICE_INDEX_EXCLUDE_VARIETIES=小麦
 PRICE_INDEX_DEEP_KEEP_AREAS=中粮榆树,吉林梅花,京粮龙江,寿光金玉米,诸城兴贸,福洋生物,河南汉永,孟州金玉米,宁夏伊品,宝鸡阜丰,蚌埠丰原,骊骅原料
 DAILY_WRITE_COOLDOWN_HOURS=24
-MONTHLY_QUOTA_LIMIT=4800
+MONTHLY_QUOTA_LIMIT=4000
 ```
+
+> 熔断阈值 4000 为覆盖写入熔断，预留 gettoken（≈360）与 create_document 的额度空间，保证月度总调用硬性 < 5000。验证时实际精简组合数为 131（预估 68，因每个收购点含约 2 个等级）。
 
 首次上线首轮：华南/海南与价格指数存量文档空哈希，仅记录哈希不写入（省一次全量重写）；次日价格指数开始按"内容变化才写 + 每日冷却"正常同步。
 
