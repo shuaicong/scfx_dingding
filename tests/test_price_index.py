@@ -1,4 +1,6 @@
 """价格指数采集器精简与时间戳测试"""
+from datetime import datetime, timedelta
+
 import pytest
 from unittest import mock
 from crawler.price_index import PriceIndexCollector
@@ -51,8 +53,10 @@ def test_deep_keep_areas(mock_list, mock_tree, mock_rank, monkeypatch):
 
 @mock.patch.object(PriceIndexCollector, "get_price_chart")
 def test_build_document_uses_data_date(mock_chart):
+    # 数据截止日期取价格数据最后一天，日期需在近 PRICE_INDEX_DAYS 天窗口内
+    test_date = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
     mock_chart.return_value = [{
-        "priceDate": "2026-07-30", "price": "2500", "priceDiff": "+10",
+        "priceDate": test_date, "price": "2500", "priceDiff": "+10",
         "lastYearPrice": "2400", "remark": "",
     }]
     pc = PriceIndexCollector()
@@ -60,5 +64,5 @@ def test_build_document_uses_data_date(mock_chart):
            "area": "石家庄", "rank": "二等", "price_type": "主流粮成交价"}
     content = pc.build_document(cfg)
     assert "数据截止日期" in content
-    assert "2026-07-30" in content
+    assert test_date in content
     assert "采集时间" not in content
