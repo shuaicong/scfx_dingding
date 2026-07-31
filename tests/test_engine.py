@@ -137,3 +137,17 @@ def test_big_data_folder_cached_in_meta(engine):
     engine.dingtalk.find_or_create_folder.reset_mock()
     assert engine._ensure_big_data_folder() == "bigFolder"
     engine.dingtalk.find_or_create_folder.assert_not_called()
+
+
+def test_price_index_folder_read_from_meta_on_fresh_instance(engine):
+    """新 SyncEngine 实例（内存缓存为空）应命中 meta，不再触发网络查询"""
+    engine.dingtalk.find_or_create_folder.return_value = "folderId"
+    engine._ensure_price_index_folder()
+    fresh = SyncEngine.__new__(SyncEngine)
+    fresh.tracker = engine.tracker
+    fresh.dingtalk = mock.MagicMock()
+    fresh._price_index_folder_id = None
+    fresh._big_data_folder_id = None
+    fresh._huanan_folder_id = None
+    assert fresh._ensure_price_index_folder() == "folderId"
+    fresh.dingtalk.find_or_create_folder.assert_not_called()
