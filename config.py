@@ -93,6 +93,16 @@ GRAINMARKET_TARGET_NODE_ID = _env("GRAINMARKET_TARGET_NODE_ID", "pLmkKOwY9bpPgm2
 # 采集的文章类型（11=交易结果）
 GRAINMARKET_ARTICLE_TYPES = _env("GRAINMARKET_ARTICLE_TYPES", "11").split(",")
 
+# ========== 钉钉调用量优化配置 ==========
+# 排除的价格指数品种（逗号分隔），如 "小麦"
+PRICE_INDEX_EXCLUDE_VARIETIES = _env("PRICE_INDEX_EXCLUDE_VARIETIES", "")
+# 深加工企业收购价保留的收购点白名单（逗号分隔）
+PRICE_INDEX_DEEP_KEEP_AREAS = _env("PRICE_INDEX_DEEP_KEEP_AREAS", "")
+# 同文档每日冷却期（小时），冷却期内不重复写入
+DAILY_WRITE_COOLDOWN_HOURS = _env_int("DAILY_WRITE_COOLDOWN_HOURS", 24)
+# 月度写入熔断阈值
+MONTHLY_QUOTA_LIMIT = _env_int("MONTHLY_QUOTA_LIMIT", 4800)
+
 # ========== 调度配置 ==========
 # 轮询间隔（分钟），每隔 N 分钟检测一次新文章
 SCHEDULE_INTERVAL_MINUTES = _env_int("SCHEDULE_INTERVAL_MINUTES", 30)
