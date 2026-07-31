@@ -168,3 +168,21 @@ def test_relearn_triggered_after_cooldown(engine, monkeypatch):
     engine._trigger_relearn()
     engine_module.trigger_knowledge_relearn.assert_called_once()
     assert engine.tracker.meta_get("relearn_last_trigger") is not None
+
+
+def test_sync_one_skips_when_quota_full(engine):
+    _set_monthly_count(engine, 4000)
+    written = engine._sync_one("1", "标题")
+    assert written is False
+    engine.dingtalk.create_document.assert_not_called()
+    engine.dingtalk.overwrite_content.assert_not_called()
+
+
+def test_sync_one_writes_when_quota_available(engine):
+    engine.crawler.get_article_content.return_value = "内容"
+    engine.dingtalk.create_document.return_value = {"docKey": "k1", "url": "u1"}
+    written = engine._sync_one("1", "标题")
+    assert written is True
+    engine.dingtalk.overwrite_content.assert_called_once()
+    assert engine.tracker.get_monthly_write_count() == 1
+    assert engine.tracker.get_record("1")["content_hash"] is not None

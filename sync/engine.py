@@ -166,10 +166,15 @@ class SyncEngine:
 
             # 3. 同步单篇文章
             try:
-                self._sync_one(article_id, title)
-                stats["new"] += 1
-                stats["results"].append({"id": article_id, "title": title, "status": "ok"})
-                logger.info("✅ 同步成功: [%s] %s", article_id, title)
+                written = self._sync_one(article_id, title)
+                if written:
+                    stats["new"] += 1
+                    stats["results"].append({"id": article_id, "title": title, "status": "ok"})
+                    logger.info("✅ 同步成功: [%s] %s", article_id, title)
+                else:
+                    stats["skipped"] += 1
+                    stats["results"].append({"id": article_id, "title": title, "status": "skipped"})
+                    logger.info("配额满跳过: [%s] %s", article_id, title)
             except Exception as e:
                 stats["failed"] += 1
                 stats["results"].append({"id": article_id, "title": title, "status": "fail", "error": str(e)})
@@ -187,8 +192,15 @@ class SyncEngine:
     # ----------------------------------------------------------------
     # 单篇文章同步
     # ----------------------------------------------------------------
-    def _sync_one(self, article_id: str, title: str):
-        """同步单篇文章到钉钉知识库"""
+    def _sync_one(self, article_id: str, title: str) -> bool:
+        """同步单篇文章到钉钉知识库；返回是否实际写入内容。
+
+        配额满时不创建文档（避免重复创建），文章保持未同步，下次重试。
+        """
+        if not self._quota_available():
+            logger.warning("月度配额已满，跳过新增文章同步: %s", title)
+            return False
+
         # 1. 获取文章内容（Markdown）
         content = self.crawler.get_article_content(article_id)
 
@@ -204,15 +216,18 @@ class SyncEngine:
 
         # 3. 写入 Markdown 内容
         self.dingtalk.overwrite_content(doc_key=doc_key, content=content)
+        self.tracker.bump_monthly_write_count()
         logger.info("钉钉文档内容写入成功: docKey=%s", doc_key)
 
-        # 4. 标记已同步
+        # 4. 标记已同步（含内容哈希）
         self.tracker.mark_synced(
             article_id=article_id,
             title=title,
             dingtalk_doc_key=doc_key,
             dingtalk_url=doc_url,
+            content_hash=hashlib.sha1(content.encode("utf-8")).hexdigest(),
         )
+        return True
 
     # ----------------------------------------------------------------
     # 查询统计
@@ -252,8 +267,11 @@ class SyncEngine:
                     continue
 
                 try:
-                    self._sync_one(article_id, title)
-                    stats["new"] += 1
+                    written = self._sync_one(article_id, title)
+                    if written:
+                        stats["new"] += 1
+                    else:
+                        stats["skipped"] += 1
                 except Exception as e:
                     stats["failed"] += 1
                     logger.error("历史同步失败: [%s] %s - %s", article_id, title, e)
@@ -350,8 +368,9 @@ class SyncEngine:
             # 检查是否已同步过（存储 docKey）
             existing = self.tracker.get_price_index_doc(doc_key_id)
 
-            # 冷却期内跳过已有组合的整篇处理（含爬虫构建）
-            if existing and self.tracker.price_index_within_cooldown(doc_key_id, DAILY_WRITE_COOLDOWN_HOURS):
+            # 冷却期内跳过已有组合的整篇处理（含爬虫构建）；占位哈希待补写的不跳过
+            if (existing and existing.get("content_hash") != PENDING_HASH
+                    and self.tracker.price_index_within_cooldown(doc_key_id, DAILY_WRITE_COOLDOWN_HOURS)):
                 stats["skipped"] += 1
                 continue
 
@@ -441,8 +460,15 @@ class SyncEngine:
         self.tracker.meta_set("folder_node_id:big_data", folder_id)
         return folder_id
 
-    def _sync_one_big_data(self, article_id: str, title: str, folder_id: str):
-        """同步单篇农粮大数据文章到钉钉知识库"""
+    def _sync_one_big_data(self, article_id: str, title: str, folder_id: str) -> bool:
+        """同步单篇农粮大数据文章到钉钉知识库；返回是否实际写入内容。
+
+        配额满时不创建文档，文章保持未同步，下次重试。
+        """
+        if not self._quota_available():
+            logger.warning("月度配额已满，跳过新增文章同步: %s", title)
+            return False
+
         # 1. 获取文章内容（Markdown），columnType=1
         content = self.crawler.get_article_content(
             article_id, column_type=BIG_DATA_COLUMN_TYPE,
@@ -459,15 +485,18 @@ class SyncEngine:
 
         # 3. 写入 Markdown 内容
         self.dingtalk.overwrite_content(doc_key=doc_key, content=content)
+        self.tracker.bump_monthly_write_count()
 
-        # 4. 标记已同步（用 bigdata: 前缀避免与普通文章 ID 冲突）
+        # 4. 标记已同步（用 bigdata: 前缀避免与普通文章 ID 冲突，含内容哈希）
         self.tracker.mark_synced(
             article_id=f"bigdata:{article_id}",
             title=title,
             dingtalk_doc_key=doc_key,
             dingtalk_url=doc_url,
             extra=f'{{"columnType":"{BIG_DATA_COLUMN_TYPE}"}}',
+            content_hash=hashlib.sha1(content.encode("utf-8")).hexdigest(),
         )
+        return True
 
     def sync_big_data(self, days: int = 2) -> dict:
         """同步农粮大数据文章
@@ -509,10 +538,15 @@ class SyncEngine:
                 continue
 
             try:
-                self._sync_one_big_data(article_id, title, folder_id)
-                stats["new"] += 1
-                stats["results"].append({"id": article_id, "title": title, "status": "ok"})
-                logger.info("同步成功: [%s] %s", article_id, title)
+                written = self._sync_one_big_data(article_id, title, folder_id)
+                if written:
+                    stats["new"] += 1
+                    stats["results"].append({"id": article_id, "title": title, "status": "ok"})
+                    logger.info("同步成功: [%s] %s", article_id, title)
+                else:
+                    stats["skipped"] += 1
+                    stats["results"].append({"id": article_id, "title": title, "status": "skipped"})
+                    logger.info("配额满跳过: [%s] %s", article_id, title)
             except Exception as e:
                 stats["failed"] += 1
                 stats["results"].append({"id": article_id, "title": title, "status": "fail", "error": str(e)})
@@ -556,8 +590,9 @@ class SyncEngine:
             # 查询已有记录（判断是新文章还是更新）
             existing = self.tracker.get_record(track_key)
 
-            # 冷却期内跳过已有文章的整篇处理（含爬虫构建）
-            if existing and self.tracker.is_within_cooldown(track_key, DAILY_WRITE_COOLDOWN_HOURS):
+            # 冷却期内跳过已有文章的整篇处理（含爬虫构建）；占位哈希待补写的不跳过
+            if (existing and existing.get("content_hash") != PENDING_HASH
+                    and self.tracker.is_within_cooldown(track_key, DAILY_WRITE_COOLDOWN_HOURS)):
                 stats["skipped"] += 1
                 continue
 
@@ -685,8 +720,9 @@ class SyncEngine:
 
             existing = self.tracker.get_record(track_key)
 
-            # 冷却期内跳过已有文章的整篇处理（含爬虫构建）
-            if existing and self.tracker.is_within_cooldown(track_key, DAILY_WRITE_COOLDOWN_HOURS):
+            # 冷却期内跳过已有文章的整篇处理（含爬虫构建）；占位哈希待补写的不跳过
+            if (existing and existing.get("content_hash") != PENDING_HASH
+                    and self.tracker.is_within_cooldown(track_key, DAILY_WRITE_COOLDOWN_HOURS)):
                 stats["skipped"] += 1
                 continue
 
