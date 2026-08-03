@@ -78,6 +78,8 @@ BIG_DATA_COLUMN_TYPE = _env("BIG_DATA_COLUMN_TYPE", "1")
 # ========== 华南粮网配置 ==========
 # 华南粮网栏目ID（2=交易结果公告）
 HUANAN_COLUMN_ID = _env_int("HUANAN_COLUMN_ID", 2)
+# 是否采集华南粮网（false 时跳过华南同步；交易结果公告无成交价格，默认保留可配置停用）
+HUANAN_ENABLED = _env_bool("HUANAN_ENABLED", True)
 # 华南粮网对应的钉钉知识库 workspace
 HUANAN_WORKSPACE_ID = _env("HUANAN_WORKSPACE_ID", "oG8LRSYNK2qbk1v5")
 # 华南粮网目标节点（用户指定的文件夹）

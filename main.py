@@ -19,7 +19,7 @@ import sys
 
 from apscheduler.schedulers.blocking import BlockingScheduler
 
-from config import SCHEDULE_INTERVAL_MINUTES
+from config import HUANAN_ENABLED, SCHEDULE_INTERVAL_MINUTES
 from sync.engine import SyncEngine
 
 # 日志配置
@@ -48,10 +48,14 @@ def do_sync():
                 big_stats["total"], big_stats["new"],
                 big_stats["skipped"], big_stats["failed"])
     now = datetime.now()
-    huanan_stats = engine.sync_huanan(year=now.year, month=now.month)
-    logger.info("华南粮网同步完成: 总计%d, 新增%d, 更新%d, 失败%d",
-                huanan_stats["total"], huanan_stats["new"],
-                huanan_stats["updated"], huanan_stats["failed"])
+    if HUANAN_ENABLED:
+        huanan_stats = engine.sync_huanan(year=now.year, month=now.month)
+        logger.info("华南粮网同步完成: 总计%d, 新增%d, 更新%d, 失败%d",
+                    huanan_stats["total"], huanan_stats["new"],
+                    huanan_stats["updated"], huanan_stats["failed"])
+    else:
+        huanan_stats = {"total": 0, "new": 0, "updated": 0, "skipped": 0, "failed": 0}
+        logger.info("华南粮网同步已停用（HUANAN_ENABLED=false）")
     grain_stats = engine.sync_grainmarket(year=now.year, month=now.month)
     logger.info("海南交易中心同步完成: 总计%d, 新增%d, 更新%d, 失败%d",
                 grain_stats["total"], grain_stats["new"],
@@ -132,13 +136,16 @@ def main():
         stats = engine.sync_big_data(days=days)
         print(f"农粮大数据同步完成: 总计{stats['total']}, 新增{stats['new']}, 跳过{stats['skipped']}, 失败{stats['failed']}")
     elif args.huanan:
-        from datetime import datetime
-        engine = SyncEngine()
-        now = datetime.now()
-        stats = engine.sync_huanan(year=now.year, month=now.month)
-        print(f"华南粮网同步完成: 总计{stats['total']}, 新增{stats['new']}, 更新{stats['updated']}, 失败{stats['failed']}")
-        if stats.get("new", 0) > 0:
-            engine.send_new_article_notifications({"huanan": stats})
+        if not HUANAN_ENABLED:
+            print("华南粮网同步已停用（HUANAN_ENABLED=false）")
+        else:
+            from datetime import datetime
+            engine = SyncEngine()
+            now = datetime.now()
+            stats = engine.sync_huanan(year=now.year, month=now.month)
+            print(f"华南粮网同步完成: 总计{stats['total']}, 新增{stats['new']}, 更新{stats['updated']}, 失败{stats['failed']}")
+            if stats.get("new", 0) > 0:
+                engine.send_new_article_notifications({"huanan": stats})
     elif args.grainmarket:
         from datetime import datetime
         engine = SyncEngine()
